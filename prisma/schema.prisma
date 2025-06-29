@@ -1,0 +1,312 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Import schemas from bounded contexts
+// User Context
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          UserRole  @default(STUDENT)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  profile         UserProfile?
+  accounts        Account[]
+  sessions        Session[]
+  enrollments     Enrollment[]
+  instructorCourses Course[]   @relation("InstructorCourses")
+  notifications   Notification[]
+  discussions     Discussion[]
+  userMetrics     UserMetric[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model UserProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  bio       String?  @db.Text
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+enum UserRole {
+  STUDENT
+  INSTRUCTOR
+  ADMIN
+}
+
+// NextAuth models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// Course Context
+model Course {
+  id           String       @id @default(cuid())
+  title        String
+  description  String       @db.Text
+  instructorId String
+  status       CourseStatus @default(DRAFT)
+  thumbnailUrl String?
+  price        Decimal      @default(0) @db.Decimal(10, 2)
+  currency     String       @default("USD")
+  settings     Json         @default("{}")
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  // Relations
+  instructor    User           @relation("InstructorCourses", fields: [instructorId], references: [id])
+  modules       Module[]
+  enrollments   Enrollment[]
+  courseMetrics CourseMetric[]
+
+  @@index([instructorId, status])
+  @@map("courses")
+}
+
+model Module {
+  id          String   @id @default(cuid())
+  courseId    String
+  title       String
+  description String?  @db.Text
+  order       Int
+  duration    Int      @default(0) // in minutes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  course  Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons Lesson[]
+
+  @@index([courseId, order])
+  @@map("modules")
+}
+
+model Lesson {
+  id          String      @id @default(cuid())
+  moduleId    String
+  title       String
+  description String?     @db.Text
+  contentType ContentType
+  contentUrl  String?
+  duration    Int         @default(0) // in minutes
+  order       Int
+  metadata    Json        @default("{}")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  module      Module       @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress    Progress[]
+  discussions Discussion[]
+
+  @@index([moduleId, order])
+  @@map("lessons")
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ContentType {
+  VIDEO
+  TEXT
+  QUIZ
+  ASSIGNMENT
+}
+
+// Learning Context
+model Enrollment {
+  id         String           @id @default(cuid())
+  userId     String
+  courseId   String
+  status     EnrollmentStatus @default(ACTIVE)
+  enrolledAt DateTime         @default(now())
+  completedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  // Relations
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   Course     @relation(fields: [courseId], references: [id])
+  progress Progress[]
+
+  @@unique([userId, courseId])
+  @@index([userId, status])
+  @@index([courseId, status])
+  @@map("enrollments")
+}
+
+model Progress {
+  id            String     @id @default(cuid())
+  enrollmentId  String
+  lessonId      String
+  completed     Boolean    @default(false)
+  completedAt   DateTime?
+  watchTime     Int        @default(0) // in seconds
+  lastWatchedAt DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // Relations
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  lesson     Lesson     @relation(fields: [lessonId], references: [id])
+
+  @@unique([enrollmentId, lessonId])
+  @@index([enrollmentId, completed])
+  @@map("progress")
+}
+
+model Discussion {
+  id        String   @id @default(cuid())
+  lessonId  String
+  userId    String
+  content   String   @db.Text
+  parentId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  lesson   Lesson       @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id])
+  parent   Discussion?  @relation("DiscussionReplies", fields: [parentId], references: [id])
+  replies  Discussion[] @relation("DiscussionReplies")
+
+  @@index([lessonId, createdAt])
+  @@map("discussions")
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  SUSPENDED
+  CANCELLED
+}
+
+// Analytics Context
+model UserMetric {
+  id         String     @id @default(cuid())
+  userId     String
+  type       MetricType
+  value      Float
+  metadata   Json       @default("{}")
+  timestamp  DateTime
+  createdAt  DateTime   @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, timestamp])
+  @@map("user_metrics")
+}
+
+model CourseMetric {
+  id         String     @id @default(cuid())
+  courseId   String
+  type       MetricType
+  value      Float
+  metadata   Json       @default("{}")
+  timestamp  DateTime
+  createdAt  DateTime   @default(now())
+
+  // Relations
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, type, timestamp])
+  @@map("course_metrics")
+}
+
+enum MetricType {
+  COURSE_COMPLETION
+  USER_ENGAGEMENT
+  VIDEO_WATCH_TIME
+  QUIZ_SCORE
+  ASSIGNMENT_SUBMISSION
+}
+
+// Infrastructure Context
+model Notification {
+  id        String               @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String               @db.Text
+  channel   NotificationChannel  @default(IN_APP)
+  read      Boolean              @default(false)
+  readAt    DateTime?
+  metadata  Json                 @default("{}")
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  ENROLLMENT_SUCCESS
+  COURSE_UPDATE
+  NEW_DISCUSSION
+  ASSIGNMENT_DUE
+  COURSE_COMPLETED
+  SYSTEM_ANNOUNCEMENT
+}
+
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+  PUSH
+}
